@@ -36,28 +36,41 @@ class RoadAlignmentViewer {
                 style: new ol.style.Style({
                     stroke: new ol.style.Stroke({
                         color: '#0000ff',
-                        width: 2
+                        width: 3,
+                        lineDash: [10, 5]
                     })
                 })
             }),
             segments: new ol.layer.Vector({
                 source: this.sources.segments,
-                style: new ol.style.Style({
-                    stroke: new ol.style.Stroke({
-                        color: '#ff0000',
-                        width: 1
-                    })
-                })
+                style: function(feature, resolution) {
+                    return new ol.style.Style({
+                        stroke: new ol.style.Stroke({
+                            color: '#ff0000',
+                            width: 2
+                        }),
+                        text: new ol.style.Text({
+                            text: feature.get('segmentId').toString(),
+                            fill: new ol.style.Fill({
+                                color: '#ff0000'
+                            }),
+                            stroke: new ol.style.Stroke({
+                                color: '#ffffff',
+                                width: 2
+                            })
+                        })
+                    });
+                }
             }),
             segmentBuffers: new ol.layer.Vector({
                 source: this.sources.segmentBuffers,
                 style: new ol.style.Style({
                     stroke: new ol.style.Stroke({
-                        color: '#00ff00',
-                        width: 1
+                        color: '#00aa00',
+                        width: 2
                     }),
                     fill: new ol.style.Fill({
-                        color: 'rgba(0, 255, 0, 0.1)'
+                        color: 'rgba(0, 170, 0, 0.2)'
                     })
                 })
             }),
@@ -234,9 +247,12 @@ class RoadAlignmentViewer {
     updateSegments(geometry) {
         this.sources.segments.clear();
         
+        let segmentId = 0;
         const addSegment = (segment) => {
             const feature = new ol.Feature({
-                geometry: this.convertToOLGeometry(segment)
+                geometry: this.convertToOLGeometry(segment),
+                segmentId: segmentId++,
+                segmentType: segment.type
             });
             this.sources.segments.addFeature(feature);
         };
@@ -254,28 +270,58 @@ class RoadAlignmentViewer {
         const features = this.sources.segments.getFeatures();
         features.forEach(feature => {
             const coords = feature.getGeometry().getCoordinates();
-            for (let i = 0; i < coords.length - 1; i++) {
-                // Transform coordinates back to EPSG:2274 for buffer calculation
-                const [x1, y1] = proj4('EPSG:3857', 'EPSG:2274', coords[i]);
-                const [x2, y2] = proj4('EPSG:3857', 'EPSG:2274', coords[i + 1]);
+            const segmentType = feature.get('segmentType');
+            
+            // For CircularString, only use start and end points to get tangent lines
+            const bufferPoints = [];
+            if (segmentType === 'CircularString') {
+                const startPoint = coords[0];
+                const endPoint = coords[coords.length - 1];
                 
+                // Transform points to EPSG:2274
+                const [x1, y1] = proj4('EPSG:3857', 'EPSG:2274', startPoint);
+                const [x2, y2] = proj4('EPSG:3857', 'EPSG:2274', endPoint);
+                
+                // Calculate tangent lines at start and end
                 const start = { x: x1, y: y1 };
                 const end = { x: x2, y: y2 };
                 
-                // Generate buffer in EPSG:2274
-                const bufferPoints = GeometryUtils.generateSegmentBuffer(start, end, this.bufferWidth);
+                // Generate buffer using tangent lines
+                const tangentBuffer = GeometryUtils.generateSegmentBuffer(start, end, this.bufferWidth);
                 
-                // Transform buffer points back to EPSG:3857 for display
-                const transformedBufferPoints = bufferPoints.map(p => {
+                // Transform buffer points back to EPSG:3857
+                const transformedPoints = tangentBuffer.map(p => {
                     const [lon, lat] = proj4('EPSG:2274', 'EPSG:4326', [p.x, p.y]);
                     return ol.proj.fromLonLat([lon, lat]);
                 });
                 
                 const bufferFeature = new ol.Feature({
-                    geometry: new ol.geom.Polygon([transformedBufferPoints])
+                    geometry: new ol.geom.Polygon([transformedPoints])
                 });
                 
                 this.sources.segmentBuffers.addFeature(bufferFeature);
+            } else {
+                // For LineString segments, buffer each segment
+                for (let i = 0; i < coords.length - 1; i++) {
+                    const [x1, y1] = proj4('EPSG:3857', 'EPSG:2274', coords[i]);
+                    const [x2, y2] = proj4('EPSG:3857', 'EPSG:2274', coords[i + 1]);
+                    
+                    const start = { x: x1, y: y1 };
+                    const end = { x: x2, y: y2 };
+                    
+                    const segmentBuffer = GeometryUtils.generateSegmentBuffer(start, end, this.bufferWidth);
+                    
+                    const transformedPoints = segmentBuffer.map(p => {
+                        const [lon, lat] = proj4('EPSG:2274', 'EPSG:4326', [p.x, p.y]);
+                        return ol.proj.fromLonLat([lon, lat]);
+                    });
+                    
+                    const bufferFeature = new ol.Feature({
+                        geometry: new ol.geom.Polygon([transformedPoints])
+                    });
+                    
+                    this.sources.segmentBuffers.addFeature(bufferFeature);
+                }
             }
         });
     }
