@@ -272,34 +272,78 @@ class RoadAlignmentViewer {
             const coords = feature.getGeometry().getCoordinates();
             const segmentType = feature.get('segmentType');
             
-            // For CircularString, only use start and end points to get tangent lines
-            const bufferPoints = [];
+            // For CircularString, calculate tangent lines at control points
             if (segmentType === 'CircularString') {
-                const startPoint = coords[0];
-                const endPoint = coords[coords.length - 1];
-                
-                // Transform points to EPSG:2274
-                const [x1, y1] = proj4('EPSG:3857', 'EPSG:2274', startPoint);
-                const [x2, y2] = proj4('EPSG:3857', 'EPSG:2274', endPoint);
-                
-                // Calculate tangent lines at start and end
-                const start = { x: x1, y: y1 };
-                const end = { x: x2, y: y2 };
-                
-                // Generate buffer using tangent lines
-                const tangentBuffer = GeometryUtils.generateSegmentBuffer(start, end, this.bufferWidth);
-                
-                // Transform buffer points back to EPSG:3857
-                const transformedPoints = tangentBuffer.map(p => {
-                    const [lon, lat] = proj4('EPSG:2274', 'EPSG:4326', [p.x, p.y]);
-                    return ol.proj.fromLonLat([lon, lat]);
+                // Get control points
+                const points = coords.map(coord => {
+                    const [x, y] = proj4('EPSG:3857', 'EPSG:2274', coord);
+                    return { x, y };
                 });
-                
-                const bufferFeature = new ol.Feature({
-                    geometry: new ol.geom.Polygon([transformedPoints])
-                });
-                
-                this.sources.segmentBuffers.addFeature(bufferFeature);
+
+                // For each set of three control points
+                for (let i = 0; i < points.length - 2; i += 2) {
+                    const p1 = points[i];      // Start point
+                    const p2 = points[i + 1];  // Control point
+                    const p3 = points[i + 2];  // End point
+
+                    // Calculate tangent vectors at start and end points
+                    const startTangent = {
+                        x: p2.x - p1.x,
+                        y: p2.y - p1.y
+                    };
+                    const endTangent = {
+                        x: p3.x - p2.x,
+                        y: p3.y - p2.y
+                    };
+
+                    // Normalize tangent vectors
+                    const startLen = Math.sqrt(startTangent.x * startTangent.x + startTangent.y * startTangent.y);
+                    const endLen = Math.sqrt(endTangent.x * endTangent.x + endTangent.y * endTangent.y);
+                    
+                    startTangent.x /= startLen;
+                    startTangent.y /= startLen;
+                    endTangent.x /= endLen;
+                    endTangent.y /= endLen;
+
+                    // Generate buffer points along tangent lines
+                    const bufferPoints = [];
+                    
+                    // Start point buffer
+                    bufferPoints.push({
+                        x: p1.x - startTangent.y * this.bufferWidth,
+                        y: p1.y + startTangent.x * this.bufferWidth
+                    });
+                    
+                    // End point buffer
+                    bufferPoints.push({
+                        x: p3.x - endTangent.y * this.bufferWidth,
+                        y: p3.y + endTangent.x * this.bufferWidth
+                    });
+                    
+                    // Close the buffer polygon
+                    bufferPoints.push({
+                        x: p3.x + endTangent.y * this.bufferWidth,
+                        y: p3.y - endTangent.x * this.bufferWidth
+                    });
+                    
+                    bufferPoints.push({
+                        x: p1.x + startTangent.y * this.bufferWidth,
+                        y: p1.y - startTangent.x * this.bufferWidth
+                    });
+
+                    // Transform buffer points back to EPSG:3857
+                    const transformedPoints = bufferPoints.map(p => {
+                        const [lon, lat] = proj4('EPSG:2274', 'EPSG:4326', [p.x, p.y]);
+                        return ol.proj.fromLonLat([lon, lat]);
+                    });
+
+                    // Create buffer feature
+                    const bufferFeature = new ol.Feature({
+                        geometry: new ol.geom.Polygon([transformedPoints])
+                    });
+
+                    this.sources.segmentBuffers.addFeature(bufferFeature);
+                }
             } else {
                 // For LineString segments, buffer each segment
                 for (let i = 0; i < coords.length - 1; i++) {
