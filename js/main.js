@@ -163,27 +163,35 @@ class RoadAlignmentViewer {
 
     loadWKT(wkt) {
         try {
+            // Get alignment name from user
+            const alignmentName = document.getElementById('alignmentName').value || `Alignment ${this.sources.roadAlignments.getFeatures().length + 1}`;
+            
             // Parse WKT
             const geometry = this.wktParser.parse(wkt);
             
             // Create feature
             const feature = new ol.Feature({
-                geometry: this.convertToOLGeometry(geometry)
+                geometry: this.convertToOLGeometry(geometry),
+                name: alignmentName
             });
 
-            // Add to road alignments layer
+            // Clear existing features and add new one
+            this.sources.roadAlignments.clear();
             this.sources.roadAlignments.addFeature(feature);
 
             // Update segments and buffers
             this.updateSegments(geometry);
             this.updateBuffers();
 
-            // Update active alignment dropdown
+            // Update active alignment dropdown and set as active
             this.updateAlignmentList();
+            this.setActiveAlignment('0'); // Set as first alignment
 
-            // Zoom to feature
-            this.map.getView().fit(feature.getGeometry().getExtent(), {
-                padding: [50, 50, 50, 50]
+            // Zoom to feature with animation
+            const extent = feature.getGeometry().getExtent();
+            this.map.getView().fit(extent, {
+                padding: [50, 50, 50, 50],
+                duration: 1000
             });
         } catch (error) {
             console.error('Failed to load WKT:', error);
@@ -381,9 +389,15 @@ class RoadAlignmentViewer {
         features.forEach((feature, index) => {
             const option = document.createElement('option');
             option.value = index;
-            option.textContent = `Alignment ${index + 1}`;
+            option.textContent = feature.get('name') || `Alignment ${index + 1}`;
             select.appendChild(option);
         });
+
+        // Select the first alignment by default
+        if (features.length > 0) {
+            select.value = '0';
+            this.setActiveAlignment('0');
+        }
     }
 
     setActiveAlignment(alignmentId) {
