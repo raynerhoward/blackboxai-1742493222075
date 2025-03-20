@@ -20,9 +20,6 @@ class RoadAlignmentViewer {
         this.initialize();
     }
 
-    /**
-     * Initialize the application
-     */
     initialize() {
         // Create vector sources
         this.sources = {
@@ -88,13 +85,13 @@ class RoadAlignmentViewer {
         this.setupEventListeners();
     }
 
-    /**
-     * Initialize OpenLayers map
-     */
     initializeMap() {
-        // Get EPSG code from input
-        const epsgCode = document.getElementById('epsgCode').value || '3857';
+        // Define EPSG:2274 projection
+        const proj2274 = '+proj=lcc +lat_1=35.25 +lat_2=36.41666666666666 +lat_0=34.33333333333334 +lon_0=-86 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=us-ft +no_defs';
+        proj4.defs("EPSG:2274", proj2274);
+        ol.proj.proj4.register(proj4);
 
+        // Create the map
         this.map = new ol.Map({
             target: 'map',
             layers: [
@@ -107,16 +104,13 @@ class RoadAlignmentViewer {
                 this.layers.stationOffsetPoints
             ],
             view: new ol.View({
-                projection: `EPSG:${epsgCode}`,
-                center: [0, 0],
-                zoom: 2
+                projection: 'EPSG:3857',
+                center: [-9493000, 4163000],
+                zoom: 16
             })
         });
     }
 
-    /**
-     * Set up event listeners
-     */
     setupEventListeners() {
         // WKT input handling
         document.getElementById('loadWkt').addEventListener('click', () => {
@@ -154,10 +148,6 @@ class RoadAlignmentViewer {
         });
     }
 
-    /**
-     * Load WKT geometry
-     * @param {string} wkt - WKT string to load
-     */
     loadWKT(wkt) {
         try {
             // Parse WKT
@@ -188,27 +178,48 @@ class RoadAlignmentViewer {
         }
     }
 
-    /**
-     * Convert parsed geometry to OpenLayers geometry
-     * @param {Object} geometry - Parsed geometry object
-     * @returns {ol.geom.Geometry} OpenLayers geometry
-     */
     convertToOLGeometry(geometry) {
+        const transformCoords = coords => {
+            return coords.map(coord => {
+                try {
+                    // Parse coordinates
+                    const x = parseFloat(coord.x);
+                    const y = parseFloat(coord.y);
+                    
+                    console.log('Input EPSG:2274:', [x, y]);
+                    
+                    // Transform to EPSG:4326
+                    const [lon, lat] = proj4('EPSG:2274', 'EPSG:4326', [x, y]);
+                    console.log('Intermediate EPSG:4326:', [lon, lat]);
+                    
+                    // Transform to EPSG:3857
+                    const webMercator = ol.proj.fromLonLat([lon, lat]);
+                    console.log('Output EPSG:3857:', webMercator);
+                    
+                    return webMercator;
+                } catch (error) {
+                    console.error('Coordinate transformation error:', error);
+                    console.error('Failed coordinates:', coord);
+                    return [0, 0];
+                }
+            });
+        };
+
         switch (geometry.type) {
             case 'LineString':
                 return new ol.geom.LineString(
-                    geometry.coordinates.map(coord => [coord.x, coord.y])
+                    transformCoords(geometry.coordinates)
                 );
             case 'CircularString':
                 // For now, approximate circular strings with line segments
                 return new ol.geom.LineString(
-                    geometry.coordinates.map(coord => [coord.x, coord.y])
+                    transformCoords(geometry.coordinates)
                 );
             case 'CompoundCurve':
                 // Combine all segments into a single line string
                 const coords = [];
                 geometry.segments.forEach(segment => {
-                    const segmentCoords = segment.coordinates.map(coord => [coord.x, coord.y]);
+                    const segmentCoords = transformCoords(segment.coordinates);
                     if (coords.length > 0) {
                         segmentCoords.shift(); // Remove first point to avoid duplication
                     }
@@ -220,10 +231,6 @@ class RoadAlignmentViewer {
         }
     }
 
-    /**
-     * Update segments layer
-     * @param {Object} geometry - Parsed geometry object
-     */
     updateSegments(geometry) {
         this.sources.segments.clear();
         
@@ -241,9 +248,6 @@ class RoadAlignmentViewer {
         }
     }
 
-    /**
-     * Update buffer layer
-     */
     updateBuffers() {
         this.sources.segmentBuffers.clear();
 
@@ -251,12 +255,24 @@ class RoadAlignmentViewer {
         features.forEach(feature => {
             const coords = feature.getGeometry().getCoordinates();
             for (let i = 0; i < coords.length - 1; i++) {
-                const start = { x: coords[i][0], y: coords[i][1] };
-                const end = { x: coords[i + 1][0], y: coords[i + 1][1] };
+                // Transform coordinates back to EPSG:2274 for buffer calculation
+                const [x1, y1] = proj4('EPSG:3857', 'EPSG:2274', coords[i]);
+                const [x2, y2] = proj4('EPSG:3857', 'EPSG:2274', coords[i + 1]);
                 
+                const start = { x: x1, y: y1 };
+                const end = { x: x2, y: y2 };
+                
+                // Generate buffer in EPSG:2274
                 const bufferPoints = GeometryUtils.generateSegmentBuffer(start, end, this.bufferWidth);
+                
+                // Transform buffer points back to EPSG:3857 for display
+                const transformedBufferPoints = bufferPoints.map(p => {
+                    const [lon, lat] = proj4('EPSG:2274', 'EPSG:4326', [p.x, p.y]);
+                    return ol.proj.fromLonLat([lon, lat]);
+                });
+                
                 const bufferFeature = new ol.Feature({
-                    geometry: new ol.geom.Polygon([bufferPoints.map(p => [p.x, p.y])])
+                    geometry: new ol.geom.Polygon([transformedBufferPoints])
                 });
                 
                 this.sources.segmentBuffers.addFeature(bufferFeature);
@@ -264,9 +280,6 @@ class RoadAlignmentViewer {
         });
     }
 
-    /**
-     * Update the active alignment dropdown
-     */
     updateAlignmentList() {
         const select = document.getElementById('activeAlignment');
         const features = this.sources.roadAlignments.getFeatures();
@@ -283,26 +296,20 @@ class RoadAlignmentViewer {
         });
     }
 
-    /**
-     * Set the active alignment
-     * @param {string} alignmentId - ID of the alignment to set active
-     */
     setActiveAlignment(alignmentId) {
         this.activeAlignment = alignmentId ? 
             this.sources.roadAlignments.getFeatures()[parseInt(alignmentId)] : 
             null;
     }
 
-    /**
-     * Update info panel with station/offset information
-     * @param {Array} coordinate - Map coordinates [x, y]
-     */
     updateInfoPanel(coordinate) {
         if (!this.activeAlignment) return;
 
-        const point = { x: coordinate[0], y: coordinate[1] };
-        const segments = this.sources.segments.getFeatures();
+        // Transform coordinate from EPSG:3857 to EPSG:2274
+        const [x, y] = proj4('EPSG:3857', 'EPSG:2274', coordinate);
+        const point = { x, y };
         
+        const segments = this.sources.segments.getFeatures();
         let closestSegment = null;
         let minOffset = Infinity;
         let result = null;
@@ -311,7 +318,10 @@ class RoadAlignmentViewer {
             const coords = segment.getGeometry().getCoordinates();
             const segmentGeom = {
                 type: 'LineString',
-                coordinates: coords.map(coord => ({ x: coord[0], y: coord[1] }))
+                coordinates: coords.map(coord => {
+                    const [x, y] = proj4('EPSG:3857', 'EPSG:2274', coord);
+                    return { x, y };
+                })
             };
 
             const { station, offset, side } = GeometryUtils.calculateStationOffset(point, segmentGeom);
@@ -327,21 +337,19 @@ class RoadAlignmentViewer {
             document.getElementById('stationValue').textContent = result.station.toFixed(2);
             document.getElementById('offsetValue').textContent = result.offset.toFixed(2);
             document.getElementById('sideValue').textContent = result.side;
-            document.getElementById('xValue').textContent = coordinate[0].toFixed(2);
-            document.getElementById('yValue').textContent = coordinate[1].toFixed(2);
+            document.getElementById('xValue').textContent = point.x.toFixed(2);
+            document.getElementById('yValue').textContent = point.y.toFixed(2);
         }
     }
 
-    /**
-     * Add a station/offset point
-     * @param {Array} coordinate - Map coordinates [x, y]
-     */
     addStationOffsetPoint(coordinate) {
         if (!this.activeAlignment) return;
 
-        const point = { x: coordinate[0], y: coordinate[1] };
-        const segments = this.sources.segments.getFeatures();
+        // Transform coordinate from EPSG:3857 to EPSG:2274
+        const [x, y] = proj4('EPSG:3857', 'EPSG:2274', coordinate);
+        const point = { x, y };
         
+        const segments = this.sources.segments.getFeatures();
         let closestSegment = null;
         let minOffset = Infinity;
         let result = null;
@@ -350,7 +358,10 @@ class RoadAlignmentViewer {
             const coords = segment.getGeometry().getCoordinates();
             const segmentGeom = {
                 type: 'LineString',
-                coordinates: coords.map(coord => ({ x: coord[0], y: coord[1] }))
+                coordinates: coords.map(coord => {
+                    const [x, y] = proj4('EPSG:3857', 'EPSG:2274', coord);
+                    return { x, y };
+                })
             };
 
             const { station, offset, side } = GeometryUtils.calculateStationOffset(point, segmentGeom);
@@ -369,8 +380,8 @@ class RoadAlignmentViewer {
                     station: result.station,
                     offset: result.offset,
                     side: result.side,
-                    x: coordinate[0],
-                    y: coordinate[1]
+                    x: point.x,
+                    y: point.y
                 }
             });
 
@@ -378,10 +389,6 @@ class RoadAlignmentViewer {
         }
     }
 
-    /**
-     * Load a GeoPackage file
-     * @param {File} file - GeoPackage file to load
-     */
     async loadGeoPackage(file) {
         try {
             const layers = await this.geoPackageLoader.loadFile(file);
