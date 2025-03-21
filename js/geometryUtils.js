@@ -1,211 +1,176 @@
 class GeometryUtils {
-    /**
-     * Calculate distance between two points
-     * @param {Object} p1 - First point {x, y}
-     * @param {Object} p2 - Second point {x, y}
-     * @returns {number} Distance between points
-     */
-    static distance(p1, p2) {
-        return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+    static distanceBetweenPoints(p1, p2) {
+        return Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
     }
 
-    /**
-     * Calculate angle between three points
-     * @param {Object} p1 - First point {x, y}
-     * @param {Object} p2 - Second point (center) {x, y}
-     * @param {Object} p3 - Third point {x, y}
-     * @returns {number} Angle in radians
-     */
-    static angle(p1, p2, p3) {
-        const a = this.distance(p2, p3);
-        const b = this.distance(p1, p3);
-        const c = this.distance(p1, p2);
-        return Math.acos((a * a + c * c - b * b) / (2 * a * c));
-    }
+    static circleCenterFromThreePoints(p1, pMid, p2) {
+        const x1 = p1.x, y1 = p1.y;
+        const x2 = pMid.x, y2 = pMid.y;
+        const x3 = p2.x, y3 = p2.y;
 
-    /**
-     * Calculate point on line at given distance from start
-     * @param {Object} start - Start point {x, y}
-     * @param {Object} end - End point {x, y}
-     * @param {number} distance - Distance from start
-     * @returns {Object} Point {x, y}
-     */
-    static pointAlongLine(start, end, distance) {
-        const length = this.distance(start, end);
-        const t = distance / length;
-        return {
-            x: start.x + (end.x - start.x) * t,
-            y: start.y + (end.y - start.y) * t
-        };
-    }
+        const midX1 = (x1 + x2) / 2;
+        const midY1 = (y1 + y2) / 2;
+        const midX2 = (x2 + x3) / 2;
+        const midY2 = (y2 + y3) / 2;
 
-    /**
-     * Calculate perpendicular distance from point to line segment
-     * @param {Object} point - Point to measure from {x, y}
-     * @param {Object} lineStart - Line start point {x, y}
-     * @param {Object} lineEnd - Line end point {x, y}
-     * @returns {Object} Distance and closest point
-     */
-    static perpendicularDistance(point, lineStart, lineEnd) {
-        const A = point.x - lineStart.x;
-        const B = point.y - lineStart.y;
-        const C = lineEnd.x - lineStart.x;
-        const D = lineEnd.y - lineStart.y;
+        let slope1, slope2;
 
-        const dot = A * C + B * D;
-        const lenSq = C * C + D * D;
-        let param = -1;
-
-        if (lenSq !== 0) {
-            param = dot / lenSq;
-        }
-
-        let closestPoint;
-        if (param < 0) {
-            closestPoint = { x: lineStart.x, y: lineStart.y };
-        } else if (param > 1) {
-            closestPoint = { x: lineEnd.x, y: lineEnd.y };
+        if (y2 - y1 !== 0) {
+            slope1 = -(x2 - x1) / (y2 - y1);
         } else {
-            closestPoint = {
-                x: lineStart.x + param * C,
-                y: lineStart.y + param * D
-            };
+            slope1 = Infinity;
         }
 
-        const distance = this.distance(point, closestPoint);
-        return { distance, closestPoint };
-    }
-
-    /**
-     * Determine side of line (left/right) for a point
-     * @param {Object} lineStart - Line start point {x, y}
-     * @param {Object} lineEnd - Line end point {x, y}
-     * @param {Object} point - Point to test {x, y}
-     * @returns {string} 'left' or 'right'
-     */
-    static pointSide(lineStart, lineEnd, point) {
-        const value = ((lineEnd.x - lineStart.x) * (point.y - lineStart.y) -
-                      (lineEnd.y - lineStart.y) * (point.x - lineStart.x));
-        return value > 0 ? 'left' : 'right';
-    }
-
-    /**
-     * Generate buffer polygon for a line segment
-     * @param {Object} start - Start point {x, y, m}
-     * @param {Object} end - End point {x, y, m}
-     * @param {number} width - Buffer width
-     * @returns {Array} Array of points forming buffer polygon
-     */
-    static generateSegmentBuffer(start, end, width) {
-        // Calculate perpendicular vector
-        const dx = end.x - start.x;
-        const dy = end.y - start.y;
-        const length = Math.sqrt(dx * dx + dy * dy);
-        
-        // Normalize and rotate 90 degrees
-        const perpX = (-dy / length) * width;
-        const perpY = (dx / length) * width;
-
-        // Generate buffer points
-        return [
-            { x: start.x + perpX, y: start.y + perpY },
-            { x: end.x + perpX, y: end.y + perpY },
-            { x: end.x - perpX, y: end.y - perpY },
-            { x: start.x - perpX, y: start.y - perpY },
-            { x: start.x + perpX, y: start.y + perpY } // Close the polygon
-        ];
-    }
-
-    /**
-     * Calculate station and offset for a point relative to a segment
-     * @param {Object} point - Point to measure {x, y}
-     * @param {Object} segment - Segment {type, coordinates}
-     * @returns {Object} Station and offset values
-     */
-    static calculateStationOffset(point, segment) {
-        if (segment.type === 'LineString') {
-            return this.calculateLineStringStationOffset(point, segment.coordinates);
-        } else if (segment.type === 'CircularString') {
-            return this.calculateCircularStringStationOffset(point, segment.coordinates);
+        if (y3 - y2 !== 0) {
+            slope2 = -(x3 - x2) / (y3 - y2);
+        } else {
+            slope2 = Infinity;
         }
-        throw new Error('Unsupported segment type');
+
+        let cx, cy;
+
+        if (slope1 === Infinity) {
+            cx = midX1;
+            cy = slope2 * (cx - midX2) + midY2;
+        } else if (slope2 === Infinity) {
+            cx = midX2;
+            cy = slope1 * (cx - midX1) + midY1;
+        } else {
+            cx = (slope1 * midX1 - slope2 * midX2 + midY2 - midY1) / (slope1 - slope2);
+            cy = slope1 * (cx - midX1) + midY1;
+        }
+
+        return { x: cx, y: cy };
     }
 
-    /**
-     * Calculate station and offset for a point relative to a linestring
-     * @param {Object} point - Point to measure {x, y}
-     * @param {Array} coordinates - Array of coordinates
-     * @returns {Object} Station and offset values
-     */
-    static calculateLineStringStationOffset(point, coordinates) {
-        let minDistance = Infinity;
-        let station = 0;
-        let offset = 0;
-        let accumulatedLength = 0;
-        let side = 'right';
+    static closestPointOnArcToGivenPoint(center, radius, givenPoint) {
+        const cx = center.x, cy = center.y;
+        const gx = givenPoint.x, gy = givenPoint.y;
 
-        for (let i = 0; i < coordinates.length - 1; i++) {
-            const start = coordinates[i];
-            const end = coordinates[i + 1];
-            
-            const { distance, closestPoint } = this.perpendicularDistance(point, start, end);
-            
-            if (distance < minDistance) {
-                minDistance = distance;
-                offset = distance;
-                side = this.pointSide(start, end, point);
-                
-                // Calculate station at closest point
-                const distanceToStart = this.distance(start, closestPoint);
-                station = accumulatedLength + distanceToStart;
+        const vectorX = gx - cx;
+        const vectorY = gy - cy;
+        const distance = Math.sqrt(vectorX ** 2 + vectorY ** 2);
+
+        if (distance === 0) {
+            return { x: cx + radius, y: cy };
+        }
+
+        const closestX = cx + (vectorX / distance) * radius;
+        const closestY = cy + (vectorY / distance) * radius;
+
+        return { x: closestX, y: closestY };
+    }
+
+    static calculateCurvature(p1, pMid, p2, center) {
+        // Calculate vectors from center to points
+        const vec1 = [p1.x - center.x, p1.y - center.y];
+        const vec2 = [p2.x - center.x, p2.y - center.y];
+
+        // Calculate cross product to determine direction
+        const cross = vec1[0] * vec2[1] - vec1[1] * vec2[0];
+
+        // Calculate angles for start and end points
+        const angleStart = Math.atan2(p1.y - center.y, p1.x - center.x);
+        const angleEnd = Math.atan2(p2.y - center.y, p2.x - center.x);
+
+        // Calculate sweep angle
+        const deltaAngle = Math.atan2(Math.sin(angleEnd - angleStart), Math.cos(angleEnd - angleStart));
+
+        // Calculate curvature value in degrees
+        const curvatureVal = Math.abs(deltaAngle) * (180 / Math.PI);
+
+        // Return signed curvature (negative for counterclockwise, positive for clockwise)
+        return cross > 0 ? -curvatureVal : curvatureVal;
+    }
+
+    static calculateStationOnArc(p1, p2, closestPoint, center, radius, curvature, startMeasure) {
+        // Check if closest point coincides with start
+        if (this.distanceBetweenPoints(p1, closestPoint) < 0.001) {
+            return startMeasure;
+        }
+
+        // Calculate angles in radians
+        const startAngle = Math.atan2(p1.y - center.y, p1.x - center.x);
+        const closestAngle = Math.atan2(closestPoint.y - center.y, closestPoint.x - center.x);
+
+        // Calculate arc length from start to closest point
+        let angleDiff = closestAngle - startAngle;
+
+        // Normalize angle difference based on curvature direction
+        if (curvature > 0) { // Clockwise arc
+            if (angleDiff > 0) {
+                angleDiff = angleDiff - 2 * Math.PI;
             }
-            
-            accumulatedLength += this.distance(start, end);
+        } else { // Counterclockwise arc
+            if (angleDiff < 0) {
+                angleDiff = angleDiff + 2 * Math.PI;
+            }
         }
 
-        return { station, offset, side };
+        // Calculate arc length
+        const arcLength = radius * Math.abs(angleDiff);
+
+        // Calculate station
+        return startMeasure + arcLength;
     }
 
-    /**
-     * Calculate station and offset for a point relative to a circular string
-     * @param {Object} point - Point to measure {x, y}
-     * @param {Array} coordinates - Array of coordinates (at least 3 points)
-     * @returns {Object} Station and offset values
-     */
-    static calculateCircularStringStationOffset(point, coordinates) {
-        // This is a simplified implementation
-        // For a full implementation, you would need to:
-        // 1. Calculate the center and radius of the circular arc
-        // 2. Calculate the angles between start and end points
-        // 3. Calculate the station along the arc
-        // 4. Calculate the offset from the arc
-        
-        // For now, we'll treat it as a series of line segments
-        return this.calculateLineStringStationOffset(point, coordinates);
+    static determineSideForCircularString(center, radius, givenPoint, curvature) {
+        const cx = center.x, cy = center.y;
+        const gx = givenPoint.x, gy = givenPoint.y;
+
+        const distanceToCenter = Math.sqrt((gx - cx) ** 2 + (gy - cy) ** 2);
+
+        // Determine direction based on curvature
+        // Positive curvature means clockwise, negative means counterclockwise
+        const direction = curvature > 0 ? 1 : -1;
+
+        // Calculate signed offset
+        const signedOffset = direction * (distanceToCenter - radius);
+
+        if (Math.abs(signedOffset) < 0.001) { // Small threshold for "on-line"
+            return "on-line";
+        } else if (signedOffset > 0) {
+            return "left";
+        } else {
+            return "right";
+        }
     }
 
-    /**
-     * Find the segment containing a point within its buffer
-     * @param {Object} point - Point to test {x, y}
-     * @param {Array} segments - Array of segments
-     * @param {number} bufferWidth - Buffer width
-     * @returns {Object|null} Matching segment or null
-     */
-    static findContainingSegment(point, segments, bufferWidth) {
-        let minDistance = Infinity;
-        let matchingSegment = null;
+    static determineSideForLine(pt, proj, segment) {
+        if (!segment || !segment.geometry) {
+            return "undefined";
+        }
 
-        segments.forEach(segment => {
-            const { offset } = this.calculateStationOffset(point, segment);
-            if (offset <= bufferWidth && offset < minDistance) {
-                minDistance = offset;
-                matchingSegment = segment;
-            }
-        });
+        // Get the segment's direction vector
+        const vertices = segment.geometry;
+        if (vertices.length < 2) {
+            return "undefined";
+        }
 
-        return matchingSegment;
+        // Create vector from projection to point
+        const vecX = pt.x - proj.x;
+        const vecY = pt.y - proj.y;
+
+        // Get segment direction vector
+        const segStart = vertices[0];
+        const segEnd = vertices[vertices.length - 1];
+        const segVecX = segEnd.x - segStart.x;
+        const segVecY = segEnd.y - segStart.y;
+
+        // Compute cross product (z-component)
+        const cross = segVecX * vecY - segVecY * vecX;
+
+        if (Math.abs(cross) < 0.001) { // Small threshold for "on-line"
+            return "on-line";
+        } else if (cross > 0) {
+            return "left";
+        } else {
+            return "right";
+        }
     }
 }
 
-// Export the utilities
-window.GeometryUtils = GeometryUtils;
+// Export the class
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = GeometryUtils;
+}
