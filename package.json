@@ -1,0 +1,24 @@
+{
+  "name": "road-alignments-viewer",
+  "version": "1.0.0",
+  "description": "Road Alignments Viewer Web Application",
+  "main": "index.js",
+  "scripts": {
+    "start": "live-server --port=8080 --no-browser",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "road",
+    "alignments",
+    "gis",
+    "openlayers"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ol": "^7.5.1"
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  }
+} 

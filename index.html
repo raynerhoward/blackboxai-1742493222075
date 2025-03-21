@@ -14,6 +14,9 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- OpenLayers CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@7.5.1/ol.css" type="text/css">
+    
     <!-- Custom CSS -->
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -24,11 +27,21 @@
         </h1>
     </div>
 
+    <!-- The map container -->
+    <div id="map" class="map-container"></div>
+    
     <!-- The AlignmentViewer will inject its UI here -->
+    <div id="app-container"></div>
     
     <!-- Scripts -->
+    <!-- OpenLayers -->
+    <script src="https://cdn.jsdelivr.net/npm/ol@7.5.1/dist/ol.js"></script>
+    
+    <!-- Application Scripts -->
     <script src="js/geometryUtils.js"></script>
     <script src="js/wktParser.js"></script>
+    <script src="js/geopackageLoader.js"></script>
+    <script src="js/map.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

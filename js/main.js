@@ -4,6 +4,7 @@ class AlignmentViewer {
         this.currentAlignmentIndex = -1;
         this.bufferDistance = 500; // Default buffer distance
         this.isMonitoring = false;
+        this.map = window.alignmentMap; // Reference to the OpenLayers map
         
         // Initialize UI elements
         this.initializeUI();
@@ -66,13 +67,6 @@ class AlignmentViewer {
         this.monitorButton = document.createElement('button');
         this.monitorButton.textContent = 'Start Monitoring';
         this.monitorButton.className = 'btn monitor-btn';
-        
-        // Create canvas for visualization
-        this.canvas = document.createElement('canvas');
-        this.canvas.width = 800;
-        this.canvas.height = 600;
-        this.canvas.className = 'alignment-canvas';
-        this.ctx = this.canvas.getContext('2d');
         
         // Add elements to the page
         this.createLayout();
@@ -142,15 +136,12 @@ class AlignmentViewer {
         monitorSection.appendChild(this.monitorButton);
         leftColumn.appendChild(monitorSection);
         
-        // Add canvas to right column
-        rightColumn.appendChild(this.canvas);
-        
         // Add columns to container
         container.appendChild(leftColumn);
         container.appendChild(rightColumn);
         
         // Add container to page
-        document.body.appendChild(container);
+        document.getElementById('app-container').appendChild(container);
     }
 
     bindEvents() {
@@ -160,12 +151,24 @@ class AlignmentViewer {
         this.alignmentSelect.addEventListener('change', (e) => this.onAlignmentSelectionChanged(e));
         this.monitorButton.addEventListener('click', () => this.toggleMonitoring());
         
-        // Add mouse move listener for monitoring
-        this.canvas.addEventListener('mousemove', (e) => {
-            if (this.isMonitoring) {
-                this.handleMouseMove(e);
+        // Listen for map feature selection
+        window.addEventListener('alignment:select', (e) => {
+            const feature = e.detail.feature;
+            const index = feature.get('alignmentIndex');
+            if (index !== undefined) {
+                this.alignmentSelect.value = index;
+                this.onAlignmentSelectionChanged({ target: this.alignmentSelect });
             }
         });
+        
+        // Add mouse move listener for monitoring
+        if (this.map && this.map.map) {
+            this.map.map.on('pointermove', (e) => {
+                if (this.isMonitoring) {
+                    this.handleMouseMove(e);
+                }
+            });
+        }
     }
 
     extractStartMeasure() {
@@ -218,25 +221,36 @@ class AlignmentViewer {
         }
         
         try {
-            // Parse WKT
-            const geometry = WKTParser.parse(wktText);
-            
-            // Add alignment
+            // Add to alignments array
+            const alignmentIndex = this.alignments.length;
             this.alignments.push({
                 name: alignmentName,
-                geometry: geometry,
+                wkt: wktText,
                 startMeasure: startMeasure,
                 bufferDistance: bufferDistance
             });
             
-            // Add to select
+            // Add to the map
+            if (this.map) {
+                const feature = this.map.addAlignment(wktText, {
+                    name: alignmentName,
+                    startMeasure: startMeasure,
+                    bufferDistance: bufferDistance,
+                    alignmentIndex: alignmentIndex
+                });
+                
+                // Create buffer
+                this.createBuffer(wktText, bufferDistance, { alignmentIndex: alignmentIndex });
+            }
+            
+            // Add to select dropdown
             const option = document.createElement('option');
-            option.value = this.alignments.length - 1;
+            option.value = alignmentIndex;
             option.textContent = alignmentName;
             this.alignmentSelect.appendChild(option);
             
             // Select the new alignment
-            this.alignmentSelect.value = this.alignments.length - 1;
+            this.alignmentSelect.value = alignmentIndex;
             this.onAlignmentSelectionChanged({ target: this.alignmentSelect });
             
             // Clear inputs
@@ -247,7 +261,22 @@ class AlignmentViewer {
             alert('Alignment added successfully.');
             
         } catch (error) {
-            alert('Error parsing WKT: ' + error.message);
+            alert('Error adding alignment: ' + error.message);
+        }
+    }
+    
+    createBuffer(wkt, distance, properties = {}) {
+        try {
+            // Use WKT parser and geometry utils to create a buffer
+            const geometry = WKTParser.parse(wkt);
+            const bufferWkt = GeometryUtils.createBuffer(geometry, distance);
+            
+            // Add buffer to the map
+            if (this.map && bufferWkt) {
+                this.map.addBuffer(bufferWkt, properties);
+            }
+        } catch (error) {
+            console.error('Error creating buffer:', error);
         }
     }
 
@@ -255,8 +284,12 @@ class AlignmentViewer {
         this.alignments = [];
         this.currentAlignmentIndex = -1;
         this.alignmentSelect.innerHTML = '';
-        this.clearCanvas();
         this.resetMonitoring();
+        
+        // Clear the map
+        if (this.map) {
+            this.map.clearAll();
+        }
     }
 
     onAlignmentSelectionChanged(event) {
@@ -264,7 +297,6 @@ class AlignmentViewer {
         if (index >= 0 && index < this.alignments.length) {
             this.currentAlignmentIndex = index;
             this.bufferDistanceInput.value = this.alignments[index].bufferDistance;
-            this.drawAlignment(this.alignments[index]);
         }
     }
 
@@ -284,45 +316,42 @@ class AlignmentViewer {
     }
 
     handleMouseMove(event) {
-        if (this.currentAlignmentIndex < 0) return;
+        if (this.currentAlignmentIndex < 0 || !this.map || !this.map.map) return;
         
-        const rect = this.canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        const point = this.canvasToWorld({ x, y });
+        const pixel = event.pixel;
+        const coordinate = this.map.map.getCoordinateFromPixel(pixel);
         const alignment = this.alignments[this.currentAlignmentIndex];
         
-        const result = this.calculateStationOffset(point, alignment);
-        if (result) {
-            this.stationLabel.textContent = `Station: ${result.station.toFixed(4)}`;
-            this.offsetLabel.textContent = `Offset: ${result.offset.toFixed(2)}`;
-            this.sideLabel.textContent = `Side: ${result.side}`;
-        } else {
-            this.resetMonitoring();
+        // Convert to WGS84/EPSG:4326
+        const lonLat = ol.proj.transform(coordinate, 'EPSG:3857', 'EPSG:4326');
+        
+        // Calculate station/offset using GeometryUtils
+        try {
+            const geometry = WKTParser.parse(alignment.wkt);
+            const result = GeometryUtils.calculateStationOffset(
+                { x: lonLat[0], y: lonLat[1] }, 
+                geometry, 
+                alignment.startMeasure
+            );
+            
+            if (result) {
+                this.stationLabel.textContent = `Station: ${result.station.toFixed(4)}`;
+                this.offsetLabel.textContent = `Offset: ${result.offset.toFixed(2)}`;
+                this.sideLabel.textContent = `Side: ${result.side}`;
+                
+                // Add point to the map
+                if (this.map) {
+                    this.map.clearLayer('points');
+                    this.map.addPoint(lonLat, {
+                        station: result.station,
+                        offset: result.offset,
+                        side: result.side
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error calculating station/offset:', error);
         }
-    }
-
-    calculateStationOffset(point, alignment) {
-        // Implementation will depend on the geometry type
-        // This is a placeholder for the actual calculation
-        return null;
-    }
-
-    drawAlignment(alignment) {
-        this.clearCanvas();
-        // Implementation will depend on the geometry type
-        // This is a placeholder for the actual drawing
-    }
-
-    clearCanvas() {
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    }
-
-    canvasToWorld(point) {
-        // Convert canvas coordinates to world coordinates
-        // This is a placeholder for the actual transformation
-        return point;
     }
 }
 

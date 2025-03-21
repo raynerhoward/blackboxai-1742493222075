@@ -150,16 +150,14 @@ class GeometryUtils {
         // Create vector from projection to point
         const vecX = pt.x - proj.x;
         const vecY = pt.y - proj.y;
-
-        // Get segment direction vector
-        const segStart = vertices[0];
-        const segEnd = vertices[vertices.length - 1];
-        const segVecX = segEnd.x - segStart.x;
-        const segVecY = segEnd.y - segStart.y;
-
-        // Compute cross product (z-component)
-        const cross = segVecX * vecY - segVecY * vecX;
-
+        
+        // Create direction vector of the segment
+        const dirX = vertices[1].x - vertices[0].x;
+        const dirY = vertices[1].y - vertices[0].y;
+        
+        // Cross product to determine side
+        const cross = vecX * dirY - vecY * dirX;
+        
         if (Math.abs(cross) < 0.001) { // Small threshold for "on-line"
             return "on-line";
         } else if (cross > 0) {
@@ -168,9 +166,312 @@ class GeometryUtils {
             return "right";
         }
     }
+    
+    /**
+     * Create a buffer around a geometry
+     * @param {Object} geometry The parsed WKT geometry
+     * @param {number} distance Buffer distance in meters
+     * @returns {string} WKT string representing the buffer
+     */
+    static createBuffer(geometry, distance) {
+        try {
+            // For simplicity, this is a placeholder implementation
+            // For a real implementation, you would need to:
+            // 1. Use turf.js or a similar library for buffer creation
+            // 2. Or implement buffer algorithms for different geometry types
+            
+            // For LINESTRING or CIRCULARSTRING, create a simplified buffer 
+            // by generating a set of points at the buffer distance along the normal vectors
+            
+            if (geometry.type === 'LineString') {
+                return this.createLineStringBuffer(geometry, distance);
+            } else if (geometry.type === 'CircularString') {
+                return this.createCircularStringBuffer(geometry, distance);
+            } else {
+                console.warn('Buffer creation for', geometry.type, 'not implemented');
+                return null;
+            }
+        } catch (error) {
+            console.error('Error creating buffer:', error);
+            return null;
+        }
+    }
+    
+    /**
+     * Create a simplified buffer for a LineString
+     * @param {Object} geometry LineString geometry
+     * @param {number} distance Buffer distance
+     * @returns {string} WKT POLYGON string
+     */
+    static createLineStringBuffer(geometry, distance) {
+        const points = geometry.coordinates;
+        if (points.length < 2) return null;
+        
+        // Create rectangles for each segment and union them
+        const bufferPoints = [];
+        
+        for (let i = 0; i < points.length - 1; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            
+            // Vector from p1 to p2
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            
+            // Normalized perpendicular vector
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const nx = -dy / length;
+            const ny = dx / length;
+            
+            // Add buffer points (4 corners of the rectangle)
+            if (i === 0) {
+                bufferPoints.push({
+                    x: p1.x + nx * distance,
+                    y: p1.y + ny * distance
+                });
+                bufferPoints.push({
+                    x: p1.x - nx * distance,
+                    y: p1.y - ny * distance
+                });
+            }
+            
+            bufferPoints.push({
+                x: p2.x + nx * distance,
+                y: p2.y + ny * distance
+            });
+            bufferPoints.push({
+                x: p2.x - nx * distance,
+                y: p2.y - ny * distance
+            });
+        }
+        
+        // Add closing point
+        bufferPoints.push({
+            x: bufferPoints[0].x,
+            y: bufferPoints[0].y
+        });
+        
+        // Convert to WKT
+        const wkt = 'POLYGON((';
+        const coords = bufferPoints.map(p => `${p.x} ${p.y}`).join(',');
+        return wkt + coords + '))';
+    }
+    
+    /**
+     * Create a simplified buffer for a CircularString
+     * @param {Object} geometry CircularString geometry
+     * @param {number} distance Buffer distance
+     * @returns {string} WKT POLYGON string
+     */
+    static createCircularStringBuffer(geometry, distance) {
+        const points = geometry.coordinates;
+        if (points.length < 3) return null;
+        
+        // For a circle, use a simpler approach: create a larger and smaller circle
+        const p1 = points[0];
+        const pMid = points[1];
+        const p2 = points[2];
+        
+        // Calculate center and radius
+        const center = this.circleCenterFromThreePoints(p1, pMid, p2);
+        const radius = this.distanceBetweenPoints(center, p1);
+        
+        // Calculate inner and outer buffer radii
+        const innerRadius = Math.max(0, radius - distance);
+        const outerRadius = radius + distance;
+        
+        // Create a polygon approximation with multiple points
+        const numPoints = 36; // 10-degree intervals
+        const bufferPoints = [];
+        
+        // Generate outer circle points
+        for (let i = 0; i <= numPoints; i++) {
+            const angle = (i / numPoints) * 2 * Math.PI;
+            bufferPoints.push({
+                x: center.x + outerRadius * Math.cos(angle),
+                y: center.y + outerRadius * Math.sin(angle)
+            });
+        }
+        
+        // Generate inner circle points in reverse order
+        for (let i = numPoints; i >= 0; i--) {
+            const angle = (i / numPoints) * 2 * Math.PI;
+            bufferPoints.push({
+                x: center.x + innerRadius * Math.cos(angle),
+                y: center.y + innerRadius * Math.sin(angle)
+            });
+        }
+        
+        // Add closing point
+        bufferPoints.push({
+            x: bufferPoints[0].x,
+            y: bufferPoints[0].y
+        });
+        
+        // Convert to WKT
+        const wkt = 'POLYGON((';
+        const coords = bufferPoints.map(p => `${p.x} ${p.y}`).join(',');
+        return wkt + coords + '))';
+    }
+    
+    /**
+     * Calculate station and offset for a point relative to an alignment
+     * @param {Object} point Point coordinates {x, y}
+     * @param {Object} geometry Alignment geometry
+     * @param {number} startMeasure Starting measure of the alignment
+     * @returns {Object|null} Station, offset, and side information or null
+     */
+    static calculateStationOffset(point, geometry, startMeasure) {
+        try {
+            // Check geometry type
+            if (geometry.type === 'LineString') {
+                return this.calculateStationOffsetForLineString(point, geometry, startMeasure);
+            } else if (geometry.type === 'CircularString') {
+                return this.calculateStationOffsetForCircularString(point, geometry, startMeasure);
+            } else {
+                console.warn('Station/offset calculation for', geometry.type, 'not implemented');
+                return null;
+            }
+        } catch (error) {
+            console.error('Error calculating station/offset:', error);
+            return null;
+        }
+    }
+    
+    /**
+     * Calculate station and offset for a LineString alignment
+     * @param {Object} point Point coordinates {x, y}
+     * @param {Object} geometry LineString geometry
+     * @param {number} startMeasure Starting measure
+     * @returns {Object|null} Station, offset, and side information
+     */
+    static calculateStationOffsetForLineString(point, geometry, startMeasure) {
+        const points = geometry.coordinates;
+        if (points.length < 2) return null;
+        
+        let closestDistance = Infinity;
+        let closestSegmentIndex = -1;
+        let closestProjection = null;
+        
+        // Find closest segment
+        for (let i = 0; i < points.length - 1; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            
+            // Project point onto segment
+            const projection = this.projectPointOnSegment(point, p1, p2);
+            
+            // Calculate distance to projection
+            const distance = this.distanceBetweenPoints(point, projection);
+            
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestSegmentIndex = i;
+                closestProjection = projection;
+            }
+        }
+        
+        if (closestSegmentIndex === -1) return null;
+        
+        // Calculate distance along alignment up to the closest segment
+        let stationDistance = 0;
+        for (let i = 0; i < closestSegmentIndex; i++) {
+            stationDistance += this.distanceBetweenPoints(points[i], points[i + 1]);
+        }
+        
+        // Add distance from the start of closest segment to projection
+        stationDistance += this.distanceBetweenPoints(points[closestSegmentIndex], closestProjection);
+        
+        // Calculate station
+        const station = startMeasure + stationDistance;
+        
+        // Calculate offset (distance from point to projection)
+        const offset = this.distanceBetweenPoints(point, closestProjection);
+        
+        // Determine which side of the alignment the point is on
+        const side = this.determineSideForLine(
+            point, 
+            closestProjection, 
+            { geometry: [points[closestSegmentIndex], points[closestSegmentIndex + 1]] }
+        );
+        
+        return {
+            station,
+            offset,
+            side
+        };
+    }
+    
+    /**
+     * Calculate station and offset for a CircularString alignment
+     * @param {Object} point Point coordinates {x, y}
+     * @param {Object} geometry CircularString geometry
+     * @param {number} startMeasure Starting measure
+     * @returns {Object|null} Station, offset, and side information
+     */
+    static calculateStationOffsetForCircularString(point, geometry, startMeasure) {
+        const points = geometry.coordinates;
+        if (points.length < 3) return null;
+        
+        // For circular alignment, we need center and radius
+        const p1 = points[0];
+        const pMid = points[1];
+        const p2 = points[2];
+        
+        // Calculate center and radius
+        const center = this.circleCenterFromThreePoints(p1, pMid, p2);
+        const radius = this.distanceBetweenPoints(center, p1);
+        
+        // Calculate closest point on arc
+        const closestPoint = this.closestPointOnArcToGivenPoint(center, radius, point);
+        
+        // Calculate curvature
+        const curvature = this.calculateCurvature(p1, pMid, p2, center);
+        
+        // Calculate station
+        const station = this.calculateStationOnArc(p1, p2, closestPoint, center, radius, curvature, startMeasure);
+        
+        // Calculate offset (distance from point to closest point, signed based on inside/outside)
+        const distanceToCenter = this.distanceBetweenPoints(center, point);
+        const offset = Math.abs(distanceToCenter - radius);
+        
+        // Determine which side of the alignment the point is on
+        const side = this.determineSideForCircularString(center, radius, point, curvature);
+        
+        return {
+            station,
+            offset,
+            side
+        };
+    }
+    
+    /**
+     * Project a point onto a line segment
+     * @param {Object} point The point {x, y}
+     * @param {Object} p1 First point of segment {x, y}
+     * @param {Object} p2 Second point of segment {x, y}
+     * @returns {Object} Projected point {x, y}
+     */
+    static projectPointOnSegment(point, p1, p2) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const len2 = dx * dx + dy * dy;
+        
+        if (len2 === 0) return p1; // Segment is actually a point
+        
+        // Calculate projection
+        const t = ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / len2;
+        
+        // Constrain to segment
+        if (t < 0) return p1;
+        if (t > 1) return p2;
+        
+        return {
+            x: p1.x + t * dx,
+            y: p1.y + t * dy
+        };
+    }
 }
 
-// Export the class
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = GeometryUtils;
-}
+// Export the utils
+window.GeometryUtils = GeometryUtils;
